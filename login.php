@@ -1,85 +1,59 @@
 <?php
-// Start the session to store error messages and other session-based info
+// Include the configuration file for the database connection
+include('config.php');
+
+// Start the session
 session_start();
-require '../database/database.php';
-// Define variables and initialize them to empty values
-$email = $password = " ";
-$email_err = $password_err = " ";
 
-// Check if the form is submitted
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
+// Display error message if there's a login error
+if (isset($_SESSION['error_message'])) {
+    echo "<p style='color: red;'>".$_SESSION['error_message']."</p>";
+    unset($_SESSION['error_message']);
+}
 
-    // Validate email
-    if (empty(trim($_POST["email"]))) {
-        $email_err = "Please enter your email.";
-    } else {
-        $email = trim($_POST["email"]);
-    }
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Get login form data
+    $email = trim($_POST['email']);
+    $password = $_POST['password'];
 
-    // Validate password
-    if (empty(trim($_POST["password"]))) {
-        $password_err = "Please enter your password.";
-    } else {
-        $password = trim($_POST["password"]);
-    }
+    // Sanitize the email to prevent SQL injection
+    $email = filter_var($email, FILTER_SANITIZE_EMAIL);
 
-    // If there are no errors, proceed to validate the user credentials
-    if (empty($email_err) && empty($password_err)) {
-        // Include database connection
-        require_once "config.php"; // Make sure you have the config file with your DB connection settings
+    // Prepare the SQL statement to fetch the user by email
+    $sql = "SELECT id, fname, lname, email, pwd_hash, pwd_salt, admin FROM iss_persons WHERE email = ?";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute([$email]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        try {
-            // Prepare the SQL statement to get the user by email
-            $sql = "SELECT id, fname, lname, mobile, email, pwd_hash, pwd_salt, admin FROM iss_persons WHERE email = :email";
-            $stmt = $pdo->prepare($sql);
+    // Verify if user exists and password matches
+    if ($user) {
+        // Get the salt from the database
+        $salt = $user['pwd_salt'];
 
-            // Bind the email parameter to the prepared statement
-            $stmt->bindParam(':email', $email, PDO::PARAM_STR);
+        // Hash the entered password with the salt from the database
+        $hashed_password = md5($password . $salt);
 
-            // Execute the statement
-            $stmt->execute();
+        // Compare the hashed password with the stored hash
+        if ($hashed_password === $user['pwd_hash']) {
+            // Successful login: Store user info in session
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['user_name'] = $user['fname'] . ' ' . $user['lname'];
+            $_SESSION['user_role'] = $user['admin'] == 1 ? 'admin' : 'regular'; // Store the user's role
 
-            // Check if user exists
-            if ($stmt->rowCount() == 1) {
-                // Fetch the result
-                $user = $stmt->fetch(PDO::FETCH_ASSOC);
-                
-                // Get the stored salt and password hash
-                $db_salt = $user['pwd_salt'];
-                $db_password_hash = $user['pwd_hash'];
-
-                // Combine the stored salt and the user-entered password
-                $hashed_password = md5($password . $db_salt);
-
-                // Compare the generated hash with the stored password hash
-                if ($hashed_password === $db_password_hash) {
-                    // Password is correct, start a new session
-                    session_start();
-
-                    // Store user data in session
-                    $_SESSION["loggedin"] = true;
-                    $_SESSION["id"] = $user['id'];
-                    $_SESSION["email"] = $user['email'];
-                    $_SESSION["fname"] = $user['fname'];
-                    $_SESSION["lname"] = $user['lname'];
-                    $_SESSION["mobile"] = $user['mobile'];
-                    $_SESSION["admin"] = $user['admin'];  // Store admin status
-
-                    // Redirect to the issues list page
-                    header("location: issues_list.php");
-                    exit();
-                } else {
-                    // Display an error message if password is incorrect
-                    $password_err = "The password you entered is incorrect.";
-                }
-            } else {
-                // If email does not exist
-                $email_err = "No account found with that email.";
-            }
-        } catch (PDOException $e) {
-            // Display an error message if something goes wrong with the database query
-            echo "Error: " . $e->getMessage();
+            // Redirect to the issues list page
+            header("Location: issues_list.php"); // Redirect directly to issues_list.php
+            exit();
+        } else {
+            // Password does not match
+            $_SESSION['error_message'] = 'Invalid email or password.';
+            header('Location: login.php');
+            exit();
         }
+    } else {
+        // Email not found in the database
+        $_SESSION['error_message'] = 'Invalid email or password.';
+        header('Location: login.php');
+        exit();
     }
 }
 ?>
@@ -89,29 +63,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Department Status Report (DSR)</title>
+    <title>Login</title>
 </head>
 <body>
+    <h1>Login</h1>
 
-    <h2>Login</h2>
+    <form action="login.php" method="POST">
+        <label for="email">Email:</label>
+        <input type="email" id="email" name="email" required><br><br>
 
-    <p>Please enter your email and password to log in.</p>
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" required><br><br>
 
-    <form action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" method="post">
-        <div>
-            <label for="email">Email:</label>
-            <input type="email" name="email" value="<?php echo $email; ?>" required>
-            <span><?php echo $email_err; ?></span>
-        </div>
-        <div>
-            <label for="password">Password:</label>
-            <input type="password" name="password" required>
-            <span><?php echo $password_err; ?></span>
-        </div>
-        <div>
-            <input type="submit" value="Login">
-        </div>
+        <input type="submit" value="Login">
     </form>
 
+    <p>Don't have an account? <a href="register.php">Register here</a></p>
 </body>
 </html>
+    
+                
