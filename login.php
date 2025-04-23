@@ -1,61 +1,67 @@
 <?php
-// Include the configuration file for the database connection
-include('config.php');
-
-// Start the session
 session_start();
-
-// Display error message if there's a login error
-if (isset($_SESSION['error_message'])) {
-    echo "<p style='color: red;'>".$_SESSION['error_message']."</p>";
-    unset($_SESSION['error_message']);
-}
+require 'config.php';
+$pdo = Database::connect();
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    // Get login form data
     $email = trim($_POST['email']);
-    $password = $_POST['password'];
+    $password = trim($_POST['password']);
 
-    // Sanitize the email to prevent SQL injection
-    $email = filter_var($email, FILTER_SANITIZE_EMAIL);
+    if (!empty($email) && !empty($password)) {
+        try {
+            $stmt = $pdo->prepare("SELECT * FROM iss_persons WHERE email = :email");
+            $stmt->bindParam(':email', $email, PDO::PARAM_STR);
+            $stmt->execute();
+            
+            if ($stmt->rowCount() == 1) {
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    // Prepare the SQL statement to fetch the user by email
-    $sql = "SELECT id, fname, lname, email, pwd_hash, pwd_salt, admin FROM iss_persons WHERE email = ?";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([$email]);
-    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+                $id = $user['id'];
+                $fname = $user['fname'];
+                $lname = $user['lname'];
+                $stored_hash = trim($user['pwd_hash']); 
+                $stored_salt = trim($user['pwd_salt']);
+                $admin = $user['admin'];
 
-    // Verify if user exists and password matches
-    if ($user) {
-        // Get the salt from the database
-        $salt = $user['pwd_salt'];
+                
+                $hashed_input_pwd = md5($password . $stored_salt);
 
-        // Hash the entered password with the salt from the database
-        $hashed_password = md5($password . $salt);
+               
+                $log_data = "DEBUG LOGIN\nEmail: $email\nStored Hash: $stored_hash\nStored Salt: $stored_salt\nHashed Input Password: $hashed_input_pwd\n\n";
+                file_put_contents('login_debug.log', $log_data, FILE_APPEND);
 
-        // Compare the hashed password with the stored hash
-        if ($hashed_password === $user['pwd_hash']) {
-            // Successful login: Store user info in session
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['user_name'] = $user['fname'] . ' ' . $user['lname'];
-            $_SESSION['user_role'] = $user['admin'] == 1 ? 'admin' : 'regular'; // Store the user's role
+               
+                if ($hashed_input_pwd !== $stored_hash) {
+                    $debug_info = "Input Password: " . htmlspecialchars($password) . "<br>"
+                                . "Stored Salt: " . htmlspecialchars($stored_salt) . "<br>"
+                                . "Stored Hash: " . htmlspecialchars($stored_hash) . "<br>"
+                                . "Hashed Input Password: " . htmlspecialchars($hashed_input_pwd) . "<br>";
+                }
 
-            // Redirect to the issues list page
-            header("Location: issues_list.php"); // Redirect directly to issues_list.php
-            exit();
-        } else {
-            // Password does not match
-            $_SESSION['error_message'] = 'Invalid email or password.';
-            header('Location: login.php');
-            exit();
+                if ($hashed_input_pwd === $stored_hash) {
+                    $_SESSION['user_id'] = $id;
+                    $_SESSION['user_name'] = $fname . ' ' . $lname;
+                    $_SESSION['email'] = $email;
+                    $_SESSION['admin'] = $admin; 
+
+                    Database::disconnect();
+                    header("Location: issues_list.php"); 
+                    exit();
+                } else {
+                    $error = "Invalid email or password.";
+                }
+            } else {
+                $error = "Invalid email or password.";
+            }
+        } catch (PDOException $e) {
+            $error = "Database error: " . $e->getMessage();
         }
     } else {
-        // Email not found in the database
-        $_SESSION['error_message'] = 'Invalid email or password.';
-        header('Location: login.php');
-        exit();
+        $error = "Please enter both email and password.";
     }
 }
+
+Database::disconnect();
 ?>
 
 <!DOCTYPE html>
@@ -64,22 +70,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
-    <h1>Login</h1>
+    <div class="container mt-5">
+        <h2>ISS2: Login</h2>
+        
+        <?php if (!empty($error)): ?>
+            <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
+        <?php endif; ?>
 
-    <form action="login.php" method="POST">
-        <label for="email">Email:</label>
-        <input type="email" id="email" name="email" required><br><br>
+        <form method="POST" action="login.php" class="px-3 py-4 bg-light rounded shadow-sm">
+            <div class="mb-3">
+                <label for="email" class="form-label">Email:</label>
+                <input type="email" class="form-control" id="email" name="email" required>
+            </div>
 
-        <label for="password">Password:</label>
-        <input type="password" id="password" name="password" required><br><br>
+            <div class="mb-3">
+                <label for="password" class="form-label">Password:</label>
+                <input type="password" class="form-control" id="password" name="password" required>
+            </div>
 
-        <input type="submit" value="Login">
-    </form>
+            <button type="submit" class="btn btn-primary">Login</button>
+        </form>
 
-    <p>Don't have an account? <a href="register.php">Register here</a></p>
+        <?php if (!empty($debug_info)): ?>
+            <div class="alert alert-warning mt-4">
+                <strong>Debug Information:</strong><br>
+                <?php echo $debug_info; ?>
+            </div>
+        <?php endif; ?>
+
+    </div>
 </body>
 </html>
-    
-                
